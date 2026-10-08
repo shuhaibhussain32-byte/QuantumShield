@@ -244,7 +244,6 @@ MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
 DATA_PATH  = os.path.join(os.path.dirname(__file__), "data", "creditcard.csv")
 
 
-@st.cache_resource(show_spinner="Loading classical models …")
 def load_classical_models():
     """Load pre-trained classical models from disk."""
     import joblib
@@ -258,7 +257,6 @@ def load_classical_models():
     return models
 
 
-@st.cache_resource(show_spinner="Loading quantum model …")
 def load_quantum_model():
     """Load pre-trained QSVC from disk if available."""
     import joblib
@@ -276,7 +274,6 @@ def load_dataset_cached():
     return None
 
 
-@st.cache_data(show_spinner=False)
 def load_metadata():
     """Load training metadata JSON."""
     path = os.path.join(MODELS_DIR, "training_metadata.json")
