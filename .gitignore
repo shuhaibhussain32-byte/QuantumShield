@@ -1,0 +1,16 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Data files
+data/creditcard.csv
+data/*.csv
+
+# Models
+models/*.joblib
+models/*.png
+models/training_metadata.json
+
+# Streamlit config
+.streamlit/
