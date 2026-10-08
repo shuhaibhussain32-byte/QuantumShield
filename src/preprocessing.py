@@ -136,37 +136,30 @@ def handle_missing(df: pd.DataFrame) -> pd.DataFrame:
 # Step 3 — Feature engineering & scaling
 # ---------------------------------------------------------------------------
 
-def scale_features(df: pd.DataFrame) -> pd.DataFrame:
+def scale_features(df: pd.DataFrame, return_scalers: bool = False):
+    """Standardise Amount and Time and optionally return reusable fit values.
+
+    The model-serving app must apply these exact training values to new rows;
+    fitting a fresh scaler or using guessed constants changes the model input.
     """
-    Standardise 'Amount' and 'Time'.
-
-    V1–V28 are already PCA-scaled by the dataset provider.
-    'Time' and 'Amount' are in raw units and must be standardised so that
-    they don't dominate distance-based models.
-
-    The scaler is fitted on the entire dataset here; train/test split is
-    applied afterward so this function can also be used for the Streamlit
-    inference form (single row).
-
-    Args:
-        df: DataFrame after missing-value handling.
-
-    Returns:
-        DataFrame with scaled 'Amount' and 'Time' columns.
-    """
-    scaler = StandardScaler()
+    amount_scaler = StandardScaler()
+    time_scaler = StandardScaler()
     df = df.copy()
-    df["scaled_Amount"] = scaler.fit_transform(df[["Amount"]])
-    df["scaled_Time"] = scaler.fit_transform(df[["Time"]])
-
-    # Drop the original unscaled columns
+    df["scaled_Amount"] = amount_scaler.fit_transform(df[["Amount"]])
+    df["scaled_Time"] = time_scaler.fit_transform(df[["Time"]])
     df.drop(columns=["Time", "Amount"], inplace=True)
-
     print("[Scale] 'Amount' and 'Time' standardised → 'scaled_Amount', 'scaled_Time'")
-    return df
+
+    if not return_scalers:
+        return df
+
+    scaling = {
+        "Amount": {"mean": float(amount_scaler.mean_[0]), "scale": float(amount_scaler.scale_[0])},
+        "Time": {"mean": float(time_scaler.mean_[0]), "scale": float(time_scaler.scale_[0])},
+    }
+    return df, scaling
 
 
-# ---------------------------------------------------------------------------
 # Step 4 — Class imbalance handling
 # ---------------------------------------------------------------------------
 
@@ -344,7 +337,7 @@ def run_preprocessing_pipeline(data_path: str = DATA_PATH):
     class_dist_raw = get_class_distribution(df)
 
     # 4. Scale Amount & Time
-    df = scale_features(df)
+    df, feature_scaling = scale_features(df, return_scalers=True)
 
     # 5. Balance
     df_balanced = balance_dataset(df, strategy="undersample", ratio=1.0)
@@ -354,6 +347,16 @@ def run_preprocessing_pipeline(data_path: str = DATA_PATH):
 
     # 7. Quantum feature subset
     X_train_q, X_test_q = get_quantum_subset(X_train, X_test)
+
+    quantum_values = X_train[QUANTUM_FEATURES].to_numpy(dtype=float)
+    quantum_min = quantum_values.min(axis=0)
+    quantum_range = quantum_values.max(axis=0) - quantum_min
+    quantum_range = np.where(quantum_range == 0, 1.0, quantum_range)
+    quantum_scaling = {
+        "features": list(QUANTUM_FEATURES),
+        "min": quantum_min.tolist(),
+        "range": quantum_range.tolist(),
+    }
 
     print("\n[Pipeline] Stage 1 complete ✓\n")
 
@@ -368,6 +371,8 @@ def run_preprocessing_pipeline(data_path: str = DATA_PATH):
         "X_test_q": X_test_q,
         "class_dist_raw": class_dist_raw,
         "quantum_features": QUANTUM_FEATURES,
+        "feature_scaling": feature_scaling,
+        "quantum_scaling": quantum_scaling,
     }
 
 
