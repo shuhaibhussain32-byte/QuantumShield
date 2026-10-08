@@ -92,10 +92,8 @@ def main():
 
     # ── Stage 3: Quantum ML ───────────────────────────────────────────────
     if args.skip_quantum:
-        print("\n[Quantum] --skip-quantum flag set: using dummy predictions.")
-        # Use random-guess baseline so evaluation still runs
-        rng = np.random.RandomState(42)
-        qsvc_preds = rng.randint(0, 2, size=len(y_test))
+        print("\n[Quantum] --skip-quantum flag set: QSVC metrics will be omitted.")
+        qsvc_preds = None
         qsvc_model = None
     else:
         from src.quantum_model import run_quantum_pipeline
@@ -119,6 +117,8 @@ def main():
     metadata = {
         "quantum_trained": not args.skip_quantum,
         "quantum_features": preproc["quantum_features"],
+        "feature_scaling": preproc["feature_scaling"],
+        "quantum_scaling": preproc["quantum_scaling"],
         "class_dist_raw": preproc["class_dist_raw"],
         "train_size": int(len(X_train)),
         "test_size": int(len(X_test)),

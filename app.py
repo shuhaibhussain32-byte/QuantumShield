@@ -519,15 +519,10 @@ elif "Transaction" in page:
     </div>
     """, unsafe_allow_html=True)
 
-    # Build form
+    # Build form with every feature used by the classical models.
     with st.form("transaction_form"):
-        st.markdown("**PCA Components (V1 – V17)**")
-
-        # Row 1: V1–V6
-        row1 = st.columns(6)
+        st.markdown("**PCA Components (V1 – V28)**")
         v_vals = {}
-        feat_names = [f"V{i}" for i in range(1, 18)] + ["scaled_Amount", "scaled_Time"]
-
         v_defaults = {
             "V1": -1.36, "V2": -0.07, "V3": 2.53, "V4": 1.38,
             "V5": -0.34, "V6": 0.46, "V7": 0.24, "V8": 0.10,
@@ -535,21 +530,15 @@ elif "Transaction" in page:
             "V13": -0.99, "V14": -0.31, "V15": 1.47, "V16": -0.47,
             "V17": 0.21,
         }
-
-        col_groups = [st.columns(6), st.columns(6), st.columns(5)]
-        feat_list = [f"V{i}" for i in range(1, 18)]
-        idx = 0
-        for cols in col_groups:
-            for col in cols:
-                if idx < len(feat_list):
-                    fn = feat_list[idx]
-                    with col:
-                        v_vals[fn] = st.number_input(
-                            fn, value=float(v_defaults.get(fn, 0.0)),
-                            format="%.4f", step=0.0001,
-                            key=f"feat_{fn}"
-                        )
-                    idx += 1
+        feat_list = [f"V{i}" for i in range(1, 29)]
+        for start in range(0, len(feat_list), 7):
+            cols = st.columns(7)
+            for col, fn in zip(cols, feat_list[start:start + 7]):
+                with col:
+                    v_vals[fn] = st.number_input(
+                        fn, value=float(v_defaults.get(fn, 0.0)),
+                        format="%.4f", step=0.0001, key=f"feat_{fn}"
+                    )
 
         st.markdown("<br>**Transaction Details**", unsafe_allow_html=True)
         c1, c2, c3 = st.columns([2, 2, 4])
@@ -564,20 +553,20 @@ elif "Transaction" in page:
                                           use_container_width=True)
 
     if submitted:
-        from sklearn.preprocessing import StandardScaler
+        metadata = load_metadata() or {}
+        feature_scaling = metadata.get("feature_scaling", {})
+        if not all(name in feature_scaling for name in ("Amount", "Time")):
+            st.error("This model bundle is missing its fitted preprocessing values. Retrain with the current train.py before running predictions.")
+            st.stop()
 
-        # Build feature vector for classical models
         feature_dict = dict(v_vals)
-        feature_dict["scaled_Amount"] = (amount - 88.35) / 250.12   # approximate scaler
-        feature_dict["scaled_Time"]   = (time_s - 94813.86) / 47488.15
+        amount_params = feature_scaling["Amount"]
+        time_params = feature_scaling["Time"]
+        feature_dict["scaled_Amount"] = (amount - amount_params["mean"]) / amount_params["scale"]
+        feature_dict["scaled_Time"] = (time_s - time_params["mean"]) / time_params["scale"]
 
-        # Fill remaining V18–V28 with 0 (form only shows V1–V17 for clarity)
-        for i in range(18, 29):
-            feature_dict[f"V{i}"] = 0.0
-
-        # The model was trained on these columns
         train_cols = [f"V{i}" for i in range(1, 29)] + ["scaled_Amount", "scaled_Time"]
-        X_single = np.array([[feature_dict.get(c, 0.0) for c in train_cols]])
+        X_single = np.array([[feature_dict[c] for c in train_cols]], dtype=float)
 
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("<p class='section-title'>🎯 Prediction Results</p>",
@@ -592,8 +581,12 @@ elif "Transaction" in page:
             model = models[model_key]
             pred = model.predict(X_single)[0]
             proba = model.predict_proba(X_single)[0]
-            fraud_prob = proba[1]
-            normal_prob = proba[0]
+            fraud_class_index = np.flatnonzero(model.classes_ == 1)
+            if len(fraud_class_index) == 0:
+                st.error(f"{model_name} model does not include the fraud class. Retrain the models.")
+                continue
+            fraud_prob = float(proba[fraud_class_index[0]])
+            normal_prob = 1.0 - fraud_prob
 
             is_fraud = (pred == 1)
             box_class = "result-fraud" if is_fraud else "result-normal"
@@ -652,40 +645,44 @@ elif "Transaction" in page:
                 st.plotly_chart(gauge, use_container_width=True)
 
         # Quantum note
-        qsvc = load_quantum_model()
+        qsvc = load_quantum_model() if metadata.get("quantum_trained") else None
         if qsvc is not None:
-            metadata = load_metadata()
-            q_features = metadata.get("quantum_features", ["V1","V4","V11","V14","V17"])
-
-            X_q = np.array([[
-                np.clip(feature_dict.get(f, 0.0), 0, np.pi)
-                for f in q_features
-            ]])
-            try:
-                q_pred = qsvc.predict(X_q)[0]
-                q_label = "⚠️ POTENTIAL FRAUD" if q_pred == 1 else "✅ NORMAL"
-                q_color = "#FF6584" if q_pred == 1 else "#43D9AD"
-                st.markdown(f"""
-                <div class='result-{"fraud" if q_pred == 1 else "normal"}' style='margin-top:16px;'>
-                    <div style='font-size:13px;color:#8892b0;font-weight:600;
-                                text-transform:uppercase;letter-spacing:1px;'>
-                        ⚛️ QSVC (Quantum Model)
+            q_features = metadata.get("quantum_features", [])
+            q_scaling = metadata.get("quantum_scaling")
+            if not q_features or not q_scaling:
+                st.warning("QSVC model is available, but its fitted feature scaling is missing. Retrain the models to enable quantum predictions.")
+            else:
+                try:
+                    q_min = np.asarray(q_scaling["min"], dtype=float)
+                    q_range = np.asarray(q_scaling["range"], dtype=float)
+                    q_raw = np.asarray([[feature_dict[f] for f in q_features]], dtype=float)
+                    if q_min.shape != (len(q_features),) or q_range.shape != (len(q_features),):
+                        raise ValueError("Saved quantum scaling does not match the model features")
+                    X_q = np.clip((q_raw - q_min) / q_range * np.pi, 0, np.pi)
+                    q_pred = qsvc.predict(X_q)[0]
+                    q_label = "⚠️ POTENTIAL FRAUD" if q_pred == 1 else "✅ NORMAL"
+                    q_color = "#FF6584" if q_pred == 1 else "#43D9AD"
+                    st.markdown(f"""
+                    <div class='result-{"fraud" if q_pred == 1 else "normal"}' style='margin-top:16px;'>
+                        <div style='font-size:13px;color:#8892b0;font-weight:600;
+                                    text-transform:uppercase;letter-spacing:1px;'>
+                            ⚛️ QSVC (Quantum Model)
+                        </div>
+                        <div style='font-size:24px;font-weight:800;color:{q_color};margin:10px 0;'>
+                            {q_label}
+                        </div>
+                        <div style='font-size:13px;color:#8892b0;'>
+                            Based on features: {', '.join(q_features)}
+                        </div>
                     </div>
-                    <div style='font-size:24px;font-weight:800;color:{q_color};margin:10px 0;'>
-                        {q_label}
-                    </div>
-                    <div style='font-size:13px;color:#8892b0;'>
-                        Based on features: {', '.join(q_features)}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-            except Exception as e:
-                st.info(f"ℹ️ Quantum prediction unavailable: {e}")
+                    """, unsafe_allow_html=True)
+                except Exception as e:
+                    st.info(f"ℹ️ Quantum prediction unavailable: {e}")
         else:
             st.markdown("""
             <div class='info-box'>
-            ⚛️ Quantum (QSVC) model not found.
-            Train with: <code>python train.py</code>
+            ⚛️ QSVC was skipped during training or its model file is missing.
+            Run <code>python train.py</code> without <code>--skip-quantum</code> to enable it.
             </div>
             """, unsafe_allow_html=True)
 

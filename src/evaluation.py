@@ -98,10 +98,11 @@ def compute_all_metrics(y_test, lr_preds, rf_preds, qsvc_preds) -> list:
     print("=" * 60)
 
     metrics = [
-        compute_metrics(y_test, lr_preds,   "Logistic Regression"),
-        compute_metrics(y_test, rf_preds,   "Random Forest"),
-        compute_metrics(y_test, qsvc_preds, "QSVC (Quantum)"),
+        compute_metrics(y_test, lr_preds, "Logistic Regression"),
+        compute_metrics(y_test, rf_preds, "Random Forest"),
     ]
+    if qsvc_preds is not None:
+        metrics.append(compute_metrics(y_test, qsvc_preds, "QSVC (Quantum)"))
 
     print("\n[Pipeline] Stage 4 complete ✓\n")
     return metrics
